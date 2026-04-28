@@ -16,13 +16,27 @@ api = ExternalApi(
 
 openapi_ns = Namespace("openapi", description="User-scoped operations", path="/")
 
-from . import account, index, oauth_device, oauth_device_sso, workspaces
+from . import (
+    account,
+    app_info,
+    chat_messages,
+    completion_messages,
+    index,
+    oauth_device,
+    oauth_device_sso,
+    workflow_run,
+    workspaces,
+)
 
 __all__ = [
     "account",
+    "app_info",
+    "chat_messages",
+    "completion_messages",
     "index",
     "oauth_device",
     "oauth_device_sso",
+    "workflow_run",
     "workspaces",
 ]
 

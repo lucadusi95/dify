@@ -24,6 +24,7 @@ class UserFrom(StrEnum):
 
 class InvokeFrom(StrEnum):
     SERVICE_API = "service-api"
+    OPENAPI = "openapi"
     WEB_APP = "web-app"
     TRIGGER = "trigger"
     EXPLORE = "explore"
