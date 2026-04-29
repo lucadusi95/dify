@@ -70,6 +70,13 @@ export default function DevicePage() {
   // leak via history / Referer / server logs (RFC 8628 §5.4).
   useEffect(() => {
     if (view.kind !== 'code_entry' && view.kind !== 'chooser') return
+    // Post-login bounce: chooser holds the typed code, account just loaded.
+    // The URL was already scrubbed on the first effect run, so urlUserCode
+    // is empty here — advance using the userCode stashed in view state.
+    if (view.kind === 'chooser' && account) {
+      setView({ kind: 'authorize_account', userCode: view.userCode })
+      return
+    }
     let consumed = false
     if (ssoVerified) {
       setView({ kind: 'authorize_sso' })
@@ -84,7 +91,7 @@ export default function DevicePage() {
     }
     if (consumed && (urlUserCode || ssoVerified))
       router.replace(pathname)
-  }, [urlUserCode, ssoVerified, account, view.kind, router, pathname])
+  }, [urlUserCode, ssoVerified, account, view, router, pathname])
 
   const onContinue = async () => {
     if (!isValidUserCode(typed)) return
