@@ -2,6 +2,7 @@
 list + member-gated detail. No legacy /v1/ equivalent — the cookie-authed
 /console/api/workspaces is a separate consumer that stays in console.
 """
+
 import builtins
 
 import pytest

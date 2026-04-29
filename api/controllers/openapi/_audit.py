@@ -4,6 +4,7 @@ Pattern: logger.info with extra={"audit": True, "event": "app.run.openapi", ...}
 matches the existing oauth_device convention. The EE OTel exporter consults
 its own allowlist to decide whether to ship the line.
 """
+
 from __future__ import annotations
 
 import logging

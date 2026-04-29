@@ -3,6 +3,7 @@
 expired-but-never-presented rows have no hard-expire trigger — both get
 pruned here. Spec: docs/specs/v1.0/server/tokens.md §Hard-expire.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,26 +33,22 @@ def clean_oauth_access_tokens_task():
     candidates = or_(
         OAuthAccessToken.revoked_at < cutoff,
         # Zombies: expired but never re-presented, so middleware never flipped them.
-        (OAuthAccessToken.revoked_at.is_(None))
-        & (OAuthAccessToken.expires_at < cutoff),
+        (OAuthAccessToken.revoked_at.is_(None)) & (OAuthAccessToken.expires_at < cutoff),
     )
 
     total = 0
     while True:
-        ids = db.session.scalars(
-            select(OAuthAccessToken.id).where(candidates).limit(DELETE_BATCH_SIZE)
-        ).all()
+        ids = db.session.scalars(select(OAuthAccessToken.id).where(candidates).limit(DELETE_BATCH_SIZE)).all()
         if not ids:
             break
-        db.session.execute(
-            delete(OAuthAccessToken).where(OAuthAccessToken.id.in_(ids))
-        )
+        db.session.execute(delete(OAuthAccessToken).where(OAuthAccessToken.id.in_(ids)))
         db.session.commit()
         total += len(ids)
 
     end_at = time.perf_counter()
-    click.echo(click.style(
-        f"Cleaned {total} oauth_access_tokens rows older than {retention_days}d "
-        f"in {end_at - start_at:.2f}s",
-        fg="green",
-    ))
+    click.echo(
+        click.style(
+            f"Cleaned {total} oauth_access_tokens rows older than {retention_days}d in {end_at - start_at:.2f}s",
+            fg="green",
+        )
+    )

@@ -1,4 +1,5 @@
 """GET /openapi/v1/oauth/device/lookup is the canonical user-code lookup."""
+
 import builtins
 
 import pytest
@@ -26,14 +27,10 @@ def test_openapi_route_registered(openapi_app: Flask):
 
 
 def test_route_dispatches_to_class(openapi_app: Flask):
-    rule = next(
-        r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/lookup"
-    )
+    rule = next(r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/lookup")
     assert openapi_app.view_functions[rule.endpoint].view_class is OAuthDeviceLookupApi
 
 
 def test_route_accepts_get(openapi_app: Flask):
-    rule = next(
-        r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/lookup"
-    )
+    rule = next(r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/lookup")
     assert "GET" in rule.methods

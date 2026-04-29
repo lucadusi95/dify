@@ -1,4 +1,5 @@
 """Account-branch device-flow approve/deny under /openapi/v1."""
+
 import builtins
 
 import pytest

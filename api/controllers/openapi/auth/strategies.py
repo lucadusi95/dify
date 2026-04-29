@@ -4,6 +4,7 @@ App authorization (Acl/Membership) and caller mounting (Account/EndUser)
 vary along independent axes; each strategy is one class so the pipeline
 composition stays a flat list.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -33,9 +34,11 @@ class AclStrategy:
     """
 
     def authorize(self, ctx: Context) -> bool:
+        if ctx.subject_email is None or ctx.app is None:
+            return False
         return EnterpriseService.WebAppAuth.is_user_allowed_to_access_webapp(
             user_id=ctx.subject_email,
-            app_id=ctx.app.id,
+            app_id=ctx.app.id,  # type: ignore[attr-defined]
         )
 
 
@@ -50,7 +53,9 @@ class MembershipStrategy:
     def authorize(self, ctx: Context) -> bool:
         if ctx.subject_type == SubjectType.EXTERNAL_SSO:
             return False
-        return _has_tenant_membership(ctx.account_id, ctx.tenant.id)
+        if ctx.tenant is None:
+            return False
+        return _has_tenant_membership(ctx.account_id, ctx.tenant.id)  # type: ignore[attr-defined]
 
 
 def _has_tenant_membership(account_id: str | None, tenant_id: str) -> bool:
@@ -67,8 +72,8 @@ def _has_tenant_membership(account_id: str | None, tenant_id: str) -> bool:
 
 def _login_as(user) -> None:
     """Set Flask-Login request user so downstream services see the caller."""
-    current_app.login_manager._update_request_context_with_user(user)  # noqa: SLF001
-    user_logged_in.send(current_app._get_current_object(), user=user)  # noqa: SLF001
+    current_app.login_manager._update_request_context_with_user(user)
+    user_logged_in.send(current_app._get_current_object(), user=user)
 
 
 class CallerMounter(Protocol):
@@ -78,25 +83,31 @@ class CallerMounter(Protocol):
 
 
 class AccountMounter:
-    def applies_to(self, st: SubjectType) -> bool:
-        return st == SubjectType.ACCOUNT
+    def applies_to(self, subject_type: SubjectType) -> bool:
+        return subject_type == SubjectType.ACCOUNT
 
     def mount(self, ctx: Context) -> None:
+        if ctx.account_id is None:
+            raise RuntimeError("AccountMounter: account_id unset — BearerCheck did not run")
         account = db.session.get(Account, ctx.account_id)
-        account.current_tenant = ctx.tenant
+        if account is None:
+            raise RuntimeError("AccountMounter: account row missing for resolved bearer")
+        account.current_tenant = ctx.tenant  # type: ignore[assignment]
         _login_as(account)
         ctx.caller, ctx.caller_kind = account, "account"
 
 
 class EndUserMounter:
-    def applies_to(self, st: SubjectType) -> bool:
-        return st == SubjectType.EXTERNAL_SSO
+    def applies_to(self, subject_type: SubjectType) -> bool:
+        return subject_type == SubjectType.EXTERNAL_SSO
 
     def mount(self, ctx: Context) -> None:
+        if ctx.tenant is None or ctx.app is None or ctx.subject_email is None:
+            raise RuntimeError("EndUserMounter: tenant/app/subject_email unset — earlier steps did not run")
         end_user = EndUserService.get_or_create_end_user_by_type(
             InvokeFrom.OPENAPI,
-            tenant_id=ctx.tenant.id,
-            app_id=ctx.app.id,
+            tenant_id=ctx.tenant.id,  # type: ignore[attr-defined]
+            app_id=ctx.app.id,  # type: ignore[attr-defined]
             user_id=ctx.subject_email,
         )
         _login_as(end_user)

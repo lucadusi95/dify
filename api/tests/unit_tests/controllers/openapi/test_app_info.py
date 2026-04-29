@@ -6,8 +6,10 @@ from flask_restx import Api
 
 
 def _client():
-    from controllers.openapi import app_info  # noqa: F401
-    from controllers.openapi import openapi_ns
+    from controllers.openapi import (
+        app_info,  # noqa: F401
+        openapi_ns,
+    )
 
     app = Flask(__name__)
     api = Api(app)

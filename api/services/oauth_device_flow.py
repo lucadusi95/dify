@@ -2,6 +2,7 @@
 (DB upsert + plaintext generation), and TTL policy. Specs:
 docs/specs/v1.0/server/{device-flow.md, tokens.md}.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -15,11 +16,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from libs.oauth_bearer import TOKEN_CACHE_KEY_FMT
-from models.oauth import OAuthAccessToken
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, scoped_session
+
+from libs.oauth_bearer import TOKEN_CACHE_KEY_FMT
+from models.oauth import OAuthAccessToken
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ return raw
 """
 
 DEVICE_FLOW_TTL_SECONDS = 15 * 60  # RFC 8628 expires_in
-APPROVED_TTL_SECONDS_MIN = 60      # plaintext-token lifetime floor
+APPROVED_TTL_SECONDS_MIN = 60  # plaintext-token lifetime floor
 
 USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXY3456789"  # ambiguous chars dropped
 USER_CODE_SEGMENT_LEN = 4
@@ -95,7 +97,7 @@ class DeviceFlowState:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls, raw: str) -> "DeviceFlowState":
+    def from_json(cls, raw: str) -> DeviceFlowState:
         data = json.loads(raw)
         if "status" in data:
             data["status"] = DeviceFlowStatus(data["status"])
@@ -114,20 +116,19 @@ def _random_user_code() -> str:
     return f"{_random_user_code_segment()}-{_random_user_code_segment()}"
 
 
-class StateNotFound(Exception):
+class StateNotFoundError(Exception):
     pass
 
 
-class InvalidTransition(Exception):
+class InvalidTransitionError(Exception):
     pass
 
 
-class UserCodeExhausted(Exception):
+class UserCodeExhaustedError(Exception):
     pass
 
 
 class DeviceFlowRedis:
-
     def __init__(self, redis_client) -> None:
         self._redis = redis_client
         self._consume_on_poll_script = redis_client.register_script(_CONSUME_ON_POLL_LUA)
@@ -157,7 +158,7 @@ class DeviceFlowRedis:
             ok = self._redis.set(key, device_code, nx=True, ex=DEVICE_FLOW_TTL_SECONDS)
             if ok:
                 return user_code
-        raise UserCodeExhausted("could not allocate a unique user_code in 5 attempts")
+        raise UserCodeExhaustedError("could not allocate a unique user_code in 5 attempts")
 
     def load_by_user_code(self, user_code: str) -> tuple[str, DeviceFlowState] | None:
         raw_dc = self._redis.get(USER_CODE_KEY_FMT.format(code=user_code))
@@ -180,7 +181,7 @@ class DeviceFlowRedis:
         try:
             return DeviceFlowState.from_json(text_)
         except (ValueError, KeyError):
-            logger.error("device_flow: corrupt state for %s", device_code)
+            logger.exception("device_flow: corrupt state for %s", device_code)
             return None
 
     def approve(
@@ -195,9 +196,9 @@ class DeviceFlowRedis:
     ) -> None:
         state = self._load_state(device_code)
         if state is None:
-            raise StateNotFound(device_code)
+            raise StateNotFoundError(device_code)
         if state.status is not DeviceFlowStatus.PENDING:
-            raise InvalidTransition(f"cannot approve {state.status}")
+            raise InvalidTransitionError(f"cannot approve {state.status}")
 
         state.status = DeviceFlowStatus.APPROVED
         state.subject_email = subject_email
@@ -213,9 +214,9 @@ class DeviceFlowRedis:
     def deny(self, device_code: str) -> None:
         state = self._load_state(device_code)
         if state is None:
-            raise StateNotFound(device_code)
+            raise StateNotFoundError(device_code)
         if state.status is not DeviceFlowStatus.PENDING:
-            raise InvalidTransition(f"cannot deny {state.status}")
+            raise InvalidTransitionError(f"cannot deny {state.status}")
         state.status = DeviceFlowStatus.DENIED
         self._redis.setex(
             DEVICE_CODE_KEY_FMT.format(code=device_code),
@@ -239,7 +240,7 @@ class DeviceFlowRedis:
         try:
             return DeviceFlowState.from_json(text_)
         except (ValueError, KeyError):
-            logger.error("device_flow: corrupt state on consume %s", device_code)
+            logger.exception("device_flow: corrupt state on consume %s", device_code)
             return None
 
     def record_poll(self, device_code: str, interval_seconds: int) -> SlowDownDecision:
@@ -287,6 +288,7 @@ ACCOUNT_ISSUER_SENTINEL = "dify:account"
 @dataclass(frozen=True, slots=True)
 class MintResult:
     """Plaintext token surfaces to the caller once."""
+
     token: str
     token_id: uuid.UUID
     expires_at: datetime
@@ -308,7 +310,9 @@ def sha256_hex(token: str) -> str:
 
 
 def mint_oauth_token(
-    session: Session,
+    # Accept either Session or Flask-SQLAlchemy's request-scoped wrapper —
+    # the wrapper proxies the same execute/commit surface.
+    session: Session | scoped_session,
     redis_client,
     *,
     subject_email: str,
@@ -328,9 +332,7 @@ def mint_oauth_token(
         # Account flow always writes the sentinel — caller may pass None
         # (for clarity) or the sentinel itself; nothing else is valid.
         if subject_issuer not in (None, ACCOUNT_ISSUER_SENTINEL):
-            raise ValueError(
-                f"account-flow token must use ACCOUNT_ISSUER_SENTINEL, got {subject_issuer!r}"
-            )
+            raise ValueError(f"account-flow token must use ACCOUNT_ISSUER_SENTINEL, got {subject_issuer!r}")
         subject_issuer = ACCOUNT_ISSUER_SENTINEL
     elif prefix == PREFIX_OAUTH_EXTERNAL_SSO:
         # Defense in depth: enterprise canonicalises + rejects empty,
@@ -363,7 +365,7 @@ def mint_oauth_token(
 
 
 def _upsert(
-    session: Session,
+    session: Session | scoped_session,
     *,
     subject_email: str,
     subject_issuer: str | None,
@@ -415,6 +417,8 @@ def _upsert(
     row = session.execute(upsert_stmt).first()
     session.commit()
 
+    if row is None:
+        raise RuntimeError("oauth_token upsert returned no row")
     token_id = uuid.UUID(str(row.id))
     return UpsertOutcome(
         token_id=token_id,
@@ -449,7 +453,9 @@ def oauth_ttl_days(tenant_id: str | None = None) -> int:
     except ValueError:
         logger.warning(
             "%s=%r is not an int; falling back to %d",
-            _TTL_ENV_VAR, raw, DEFAULT_OAUTH_TTL_DAYS,
+            _TTL_ENV_VAR,
+            raw,
+            DEFAULT_OAUTH_TTL_DAYS,
         )
         return DEFAULT_OAUTH_TTL_DAYS
     if value < MIN_TTL_DAYS:

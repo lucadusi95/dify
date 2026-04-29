@@ -4,6 +4,7 @@ authorization endpoint.
 Tests verify URL routing without invoking the handler — invoking would
 require Redis, which the unit-test runtime does not initialise.
 """
+
 import builtins
 
 import pytest
@@ -31,16 +32,12 @@ def test_openapi_route_registered(openapi_app: Flask):
 
 
 def test_route_dispatches_to_class(openapi_app: Flask):
-    rule = next(
-        r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/code"
-    )
+    rule = next(r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/code")
     assert openapi_app.view_functions[rule.endpoint].view_class is OAuthDeviceCodeApi
 
 
 def test_route_accepts_post(openapi_app: Flask):
-    rule = next(
-        r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/code"
-    )
+    rule = next(r for r in openapi_app.url_map.iter_rules() if r.rule == "/openapi/v1/oauth/device/code")
     assert "POST" in rule.methods
 
 

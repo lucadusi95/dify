@@ -2,6 +2,7 @@
 Tests use a fake auth_ctx attached directly to flask.g — no
 authenticator wiring needed.
 """
+
 from __future__ import annotations
 
 import uuid

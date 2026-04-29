@@ -1,4 +1,5 @@
 """SSO-branch device-flow endpoints under /openapi/v1/oauth/device/."""
+
 import builtins
 
 import pytest

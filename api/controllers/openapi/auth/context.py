@@ -4,6 +4,7 @@ Every field starts None / empty and is filled in by a step. The pipeline
 is the only thing that should construct or mutate Context — handlers
 read populated values via the decorator's kwargs unpacking.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

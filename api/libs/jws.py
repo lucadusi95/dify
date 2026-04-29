@@ -2,11 +2,13 @@
 state envelope, external subject assertion, and approval-grant cookie —
 all three share one key-set so api ↔ enterprise can verify each other.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
 import jwt
+
 from configs import dify_config
 
 AUD_STATE_ENVELOPE = "api.sso.state_envelope"
@@ -32,14 +34,14 @@ class KeySet:
         self._active_kid = active_kid
 
     @classmethod
-    def from_shared_secret(cls) -> "KeySet":
+    def from_shared_secret(cls) -> KeySet:
         secret = dify_config.SECRET_KEY
         if not secret:
             raise KeySetError("dify_config.SECRET_KEY is empty; cannot build key-set")
         return cls({ACTIVE_KID_V1: secret.encode("utf-8")}, ACTIVE_KID_V1)
 
     @classmethod
-    def from_entries(cls, entries: dict[str, bytes], active_kid: str) -> "KeySet":
+    def from_entries(cls, entries: dict[str, bytes], active_kid: str) -> KeySet:
         return cls(entries, active_kid)
 
     @property

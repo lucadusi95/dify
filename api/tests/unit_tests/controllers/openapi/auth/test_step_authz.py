@@ -38,12 +38,7 @@ def test_membership_strategy_uses_join_lookup(member):
 
 
 def test_membership_strategy_rejects_external_sso():
-    assert (
-        MembershipStrategy().authorize(
-            _ctx(subject_type=SubjectType.EXTERNAL_SSO, account_id=None)
-        )
-        is False
-    )
+    assert MembershipStrategy().authorize(_ctx(subject_type=SubjectType.EXTERNAL_SSO, account_id=None)) is False
 
 
 def test_app_authz_check_raises_when_strategy_denies():

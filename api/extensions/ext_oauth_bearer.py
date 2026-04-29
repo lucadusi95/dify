@@ -1,6 +1,7 @@
 """Bind the bearer authenticator at startup. Must run after ext_database
 and ext_redis (needs both factories).
 """
+
 from __future__ import annotations
 
 from configs import dify_config

@@ -7,9 +7,9 @@ Tests use a fresh Blueprint + Flask-CORS per case because the production
 blueprint is a module-level singleton and can't be reconfigured once
 registered.
 """
+
 import builtins
 
-import pytest
 from flask import Blueprint, Flask
 from flask.views import MethodView
 from flask_cors import CORS

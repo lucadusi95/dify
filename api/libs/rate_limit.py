@@ -4,13 +4,15 @@ window Redis ZSET). Apply after auth decorators so scopes can read
 in-handler. RFC-8628 ``slow_down`` is inline — its response shape isn't
 generic 429. Spec: docs/specs/v1.0/server/security.md.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from functools import wraps
-from typing import Callable
+from typing import ParamSpec, TypeVar
 
 from flask import g, request, session
 from werkzeug.exceptions import TooManyRequests
@@ -81,13 +83,17 @@ def _build_limiter(spec: RateLimit) -> RateLimiter:
     )
 
 
-def rate_limit(spec: RateLimit) -> Callable:
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def rate_limit(spec: RateLimit) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Apply after auth decorators that the scopes read from."""
     limiter = _build_limiter(spec)
 
-    def wrap(fn: Callable) -> Callable:
+    def wrap(fn: Callable[_P, _R]) -> Callable[_P, _R]:
         @wraps(fn)
-        def inner(*args, **kwargs):
+        def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             key = _composite_key(spec.scopes)
             if limiter.is_rate_limited(key):
                 raise TooManyRequests("rate_limited")

@@ -5,7 +5,10 @@ Account bearers (dfoa_) see every tenant they're a member of. External
 SSO bearers (dfoe_) have no account_id and so see an empty list — that
 matches /openapi/v1/account.
 """
+
 from __future__ import annotations
+
+from itertools import starmap
 
 from flask import g
 from flask_restx import Resource
@@ -37,7 +40,7 @@ class WorkspacesApi(Resource):
             .order_by(Tenant.created_at.asc())
         ).all()
 
-        return {"workspaces": [_workspace_summary(t, m) for t, m in rows]}, 200
+        return {"workspaces": list(starmap(_workspace_summary, rows))}, 200
 
 
 @openapi_ns.route("/workspaces/<string:workspace_id>")

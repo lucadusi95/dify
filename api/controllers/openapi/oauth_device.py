@@ -12,13 +12,16 @@ sub-groups in one module:
 
 SSO branch lives in oauth_device_sso.py.
 """
+
 from __future__ import annotations
 
 import logging
 
 from flask import request
 from flask_login import login_required
-from flask_restx import Resource, reqparse
+from flask_restx import Resource
+from pydantic import BaseModel, ValidationError
+from werkzeug.exceptions import BadRequest
 
 from configs import dify_config
 from controllers.console.wraps import account_initialization_required, setup_required
@@ -41,9 +44,9 @@ from services.oauth_device_flow import (
     PREFIX_OAUTH_ACCOUNT,
     DeviceFlowRedis,
     DeviceFlowStatus,
-    InvalidTransition,
+    InvalidTransitionError,
     SlowDownDecision,
-    StateNotFound,
+    StateNotFoundError,
     mint_oauth_token,
     oauth_ttl_days,
 )
@@ -52,22 +55,41 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================================
-# Parsers
+# Request / query schemas
 # =========================================================================
 
-_code_parser = reqparse.RequestParser()
-_code_parser.add_argument("client_id", type=str, required=True, location="json")
-_code_parser.add_argument("device_label", type=str, required=True, location="json")
 
-_poll_parser = reqparse.RequestParser()
-_poll_parser.add_argument("device_code", type=str, required=True, location="json")
-_poll_parser.add_argument("client_id", type=str, required=True, location="json")
+class DeviceCodeRequest(BaseModel):
+    client_id: str
+    device_label: str
 
-_lookup_parser = reqparse.RequestParser()
-_lookup_parser.add_argument("user_code", type=str, required=True, location="args")
 
-_mutate_parser = reqparse.RequestParser()
-_mutate_parser.add_argument("user_code", type=str, required=True, location="json")
+class DevicePollRequest(BaseModel):
+    device_code: str
+    client_id: str
+
+
+class DeviceLookupQuery(BaseModel):
+    user_code: str
+
+
+class DeviceMutateRequest(BaseModel):
+    user_code: str
+
+
+def _validate_json[M: BaseModel](model: type[M]) -> M:
+    body = request.get_json(silent=True) or {}
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        raise BadRequest(str(exc))
+
+
+def _validate_query[M: BaseModel](model: type[M]) -> M:
+    try:
+        return model.model_validate(request.args.to_dict(flat=True))
+    except ValidationError as exc:
+        raise BadRequest(str(exc))
 
 
 # =========================================================================
@@ -79,9 +101,9 @@ _mutate_parser.add_argument("user_code", type=str, required=True, location="json
 class OAuthDeviceCodeApi(Resource):
     @rate_limit(LIMIT_DEVICE_CODE_PER_IP)
     def post(self):
-        args = _code_parser.parse_args()
-        client_id = args["client_id"]
-        device_label = args["device_label"]
+        payload = _validate_json(DeviceCodeRequest)
+        client_id = payload.client_id
+        device_label = payload.device_label
 
         if client_id not in dify_config.OPENAPI_KNOWN_CLIENT_IDS:
             return {"error": "unsupported_client"}, 400
@@ -104,8 +126,8 @@ class OAuthDeviceTokenApi(Resource):
     """RFC 8628 poll."""
 
     def post(self):
-        args = _poll_parser.parse_args()
-        device_code = args["device_code"]
+        payload = _validate_json(DevicePollRequest)
+        device_code = payload.device_code
 
         store = DeviceFlowRedis(redis_client)
 
@@ -145,8 +167,8 @@ class OAuthDeviceLookupApi(Resource):
 
     @rate_limit(LIMIT_LOOKUP_PUBLIC)
     def get(self):
-        args = _lookup_parser.parse_args()
-        user_code = args["user_code"].strip().upper()
+        payload = _validate_query(DeviceLookupQuery)
+        user_code = payload.user_code.strip().upper()
 
         store = DeviceFlowRedis(redis_client)
         found = store.load_by_user_code(user_code)
@@ -181,8 +203,8 @@ class DeviceApproveApi(Resource):
     @bearer_feature_required
     @rate_limit(LIMIT_APPROVE_CONSOLE)
     def post(self):
-        args = _mutate_parser.parse_args()
-        user_code = args["user_code"].strip().upper()
+        payload = _validate_json(DeviceMutateRequest)
+        user_code = payload.user_code.strip().upper()
 
         account, tenant = current_account_with_tenant()
         store = DeviceFlowRedis(redis_client)
@@ -226,10 +248,10 @@ class DeviceApproveApi(Resource):
                     token_id=str(mint.token_id),
                     poll_payload=poll_payload,
                 )
-            except (StateNotFound, InvalidTransition) as e:
+            except (StateNotFoundError, InvalidTransitionError):
                 # Row minted but state vanished — roll forward; the orphan
                 # token is revocable via auth devices list / Authorized Apps.
-                logger.error("device_flow: approve raced on %s: %s", device_code, e)
+                logger.exception("device_flow: approve raced on %s", device_code)
                 return {"error": "state_lost"}, 409
         finally:
             redis_client.delete(guard_key)
@@ -246,8 +268,8 @@ class DeviceDenyApi(Resource):
     @bearer_feature_required
     @rate_limit(LIMIT_APPROVE_CONSOLE)
     def post(self):
-        args = _mutate_parser.parse_args()
-        user_code = args["user_code"].strip().upper()
+        payload = _validate_json(DeviceMutateRequest)
+        user_code = payload.user_code.strip().upper()
 
         store = DeviceFlowRedis(redis_client)
         found = store.load_by_user_code(user_code)
@@ -259,8 +281,8 @@ class DeviceDenyApi(Resource):
 
         try:
             store.deny(device_code)
-        except (StateNotFound, InvalidTransition) as e:
-            logger.error("device_flow: deny raced on %s: %s", device_code, e)
+        except (StateNotFoundError, InvalidTransitionError):
+            logger.exception("device_flow: deny raced on %s", device_code)
             return {"error": "state_lost"}, 409
 
         _emit_deny_audit(state)
@@ -284,7 +306,9 @@ def _audit_cross_ip_if_needed(state) -> None:
     if state.created_ip and poll_ip and poll_ip != state.created_ip:
         logger.warning(
             "audit: oauth.device_code_cross_ip_poll token_id=%s creation_ip=%s poll_ip=%s",
-            state.token_id, state.created_ip, poll_ip,
+            state.token_id,
+            state.created_ip,
+            poll_ip,
             extra={
                 "audit": True,
                 "token_id": state.token_id,
@@ -299,16 +323,14 @@ def _build_account_poll_payload(account, tenant, mint) -> dict:
     handler doesn't re-query accounts/tenants for authz data.
     """
     from models import Tenant, TenantAccountJoin
+
     rows = (
         db.session.query(Tenant, TenantAccountJoin)
         .join(TenantAccountJoin, TenantAccountJoin.tenant_id == Tenant.id)
         .filter(TenantAccountJoin.account_id == account.id)
         .all()
     )
-    workspaces = [
-        {"id": str(t.id), "name": t.name, "role": getattr(m, "role", "")}
-        for t, m in rows
-    ]
+    workspaces = [{"id": str(t.id), "name": t.name, "role": getattr(m, "role", "")} for t, m in rows]
     # Prefer active session tenant → DB-flagged current join → first membership.
     default_ws_id = None
     if tenant and any(w["id"] == str(tenant) for w in workspaces):
@@ -335,7 +357,11 @@ def _build_account_poll_payload(account, tenant, mint) -> dict:
 def _emit_approve_audit(state, account, tenant, mint) -> None:
     logger.warning(
         "audit: oauth.device_flow_approved token_id=%s subject=%s client_id=%s device_label=%s rotated=? expires_at=%s",
-        mint.token_id, account.email, state.client_id, state.device_label, mint.expires_at,
+        mint.token_id,
+        account.email,
+        state.client_id,
+        state.device_label,
+        mint.expires_at,
         extra={
             "audit": True,
             "event": "oauth.device_flow_approved",
@@ -355,7 +381,8 @@ def _emit_approve_audit(state, account, tenant, mint) -> None:
 def _emit_deny_audit(state) -> None:
     logger.warning(
         "audit: oauth.device_flow_denied client_id=%s device_label=%s",
-        state.client_id, state.device_label,
+        state.client_id,
+        state.device_label,
         extra={
             "audit": True,
             "event": "oauth.device_flow_denied",
@@ -363,5 +390,3 @@ def _emit_deny_audit(state) -> None:
             "device_label": state.device_label,
         },
     )
-
-

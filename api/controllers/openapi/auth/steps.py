@@ -3,21 +3,22 @@
 BearerCheck is the only step that touches the token registry; downstream
 steps see only the populated Context.
 """
+
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from werkzeug.exceptions import BadRequest, Forbidden, NotFound, Unauthorized
 
 from controllers.openapi.auth.context import Context
 from controllers.openapi.auth.strategies import AppAuthzStrategy, CallerMounter
 from extensions.ext_database import db
-from libs.oauth_bearer import TokenExpired, get_authenticator, sha256_hex
+from libs.oauth_bearer import TokenExpiredError, get_authenticator, sha256_hex
 from models import App, Tenant, TenantStatus
 
 
 def _registry():
-    return get_authenticator()._registry  # noqa: SLF001
+    return get_authenticator().registry
 
 
 def _extract_bearer(req) -> str | None:
@@ -45,7 +46,7 @@ class BearerCheck:
 
         try:
             row = kind.resolver.resolve(_hash_token(token))
-        except TokenExpired:
+        except TokenExpiredError:
             raise Unauthorized("token expired")
         if row is None:
             raise Unauthorized("invalid bearer")
@@ -105,6 +106,8 @@ class CallerMount:
         self._mounters = mounters
 
     def __call__(self, ctx: Context) -> None:
+        if ctx.subject_type is None:
+            raise Unauthorized("subject_type unset — BearerCheck did not run")
         for m in self._mounters:
             if m.applies_to(ctx.subject_type):
                 m.mount(ctx)

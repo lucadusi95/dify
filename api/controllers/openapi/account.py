@@ -2,6 +2,7 @@
 identity read; /account/sessions and /account/sessions/<id> manage
 the user's active OAuth tokens.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -16,9 +17,9 @@ from extensions.ext_database import db
 from extensions.ext_redis import redis_client
 from libs.oauth_bearer import (
     ACCEPT_USER_ANY,
+    TOKEN_CACHE_KEY_FMT,
     AuthContext,
     SubjectType,
-    TOKEN_CACHE_KEY_FMT,
     validate_bearer,
 )
 from libs.rate_limit import (
@@ -51,8 +52,7 @@ class AccountApi(Resource):
             }
 
         account = (
-            db.session.query(Account).filter(Account.id == ctx.account_id).one_or_none()
-            if ctx.account_id else None
+            db.session.query(Account).filter(Account.id == ctx.account_id).one_or_none() if ctx.account_id else None
         )
         memberships = _load_memberships(ctx.account_id) if ctx.account_id else []
         default_ws_id = _pick_default_workspace(memberships)
@@ -129,8 +129,7 @@ class AccountSessionByIdApi(Resource):
         # Subject-match guard. 404 (not 403) on cross-subject so the
         # endpoint doesn't leak token IDs that belong to other subjects.
         owns = db.session.execute(
-            select(OAuthAccessToken.id)
-            .where(
+            select(OAuthAccessToken.id).where(
                 and_(
                     OAuthAccessToken.id == session_id,
                     *_subject_match(ctx),
@@ -160,8 +159,7 @@ def _subject_match(ctx: AuthContext) -> tuple:
 def _require_oauth_subject(ctx: AuthContext) -> None:
     if not ctx.source.startswith("oauth"):
         raise BadRequest(
-            "this endpoint revokes OAuth bearer tokens; "
-            "use /openapi/v1/personal-access-tokens/self for PATs"
+            "this endpoint revokes OAuth bearer tokens; use /openapi/v1/personal-access-tokens/self for PATs"
         )
 
 

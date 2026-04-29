@@ -1,14 +1,15 @@
 """Device-flow security primitives: enterprise_only gate, approval-grant
 cookie mint/verify/consume, and anti-framing headers.
 """
+
 from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Callable
 
 from flask import Blueprint
 from werkzeug.exceptions import NotFound
@@ -122,7 +123,10 @@ def consume_approval_grant_nonce(redis_client, nonce: str) -> bool:
         return False
     return bool(
         redis_client.set(
-            NONCE_KEY_FMT.format(nonce=nonce), "1", nx=True, ex=NONCE_TTL_SECONDS,
+            NONCE_KEY_FMT.format(nonce=nonce),
+            "1",
+            nx=True,
+            ex=NONCE_TTL_SECONDS,
         )
     )
 
@@ -132,7 +136,10 @@ def consume_sso_assertion_nonce(redis_client, nonce: str) -> bool:
         return False
     return bool(
         redis_client.set(
-            SSO_ASSERTION_NONCE_KEY_FMT.format(nonce=nonce), "1", nx=True, ex=NONCE_TTL_SECONDS,
+            SSO_ASSERTION_NONCE_KEY_FMT.format(nonce=nonce),
+            "1",
+            nx=True,
+            ex=NONCE_TTL_SECONDS,
         )
     )
 
@@ -183,7 +190,7 @@ def attach_anti_framing(bp: Blueprint) -> None:
     """X-Frame-Options + CSP on every response from ``bp`` (CI invariant #4)."""
 
     @bp.after_request
-    def _apply_headers(response):
+    def _apply_headers(response):  # pyright: ignore[reportUnusedFunction]
         for name, value in _ANTI_FRAMING_HEADERS.items():
             response.headers.setdefault(name, value)
         return response

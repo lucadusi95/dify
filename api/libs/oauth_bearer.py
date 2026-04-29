@@ -4,17 +4,19 @@ To add a token kind: write a Resolver, add a SubjectType + Accepts member,
 append a TokenKind to build_registry, and update _SUBJECT_TO_ACCEPT.
 Authenticator + validate_bearer stay untouched.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import wraps
-from typing import Callable, Iterable, Literal, Protocol
+from typing import Literal, ParamSpec, Protocol, TypeVar
 
 from flask import g, request
 from sqlalchemy import update
@@ -79,11 +81,11 @@ class TokenKind:
         return token.startswith(self.prefix)
 
 
-class InvalidBearer(Exception):
+class InvalidBearerError(Exception):
     """Token missing, unknown prefix, or no live row."""
 
 
-class TokenExpired(Exception):
+class TokenExpiredError(Exception):
     """Hard-expire bookkeeping is the resolver's job before raising."""
 
 
@@ -122,13 +124,17 @@ class BearerAuthenticator:
     def __init__(self, registry: TokenKindRegistry) -> None:
         self._registry = registry
 
+    @property
+    def registry(self) -> TokenKindRegistry:
+        return self._registry
+
     def authenticate(self, token: str) -> AuthContext:
         kind = self._registry.find(token)
         if kind is None:
-            raise InvalidBearer("unknown token prefix")
+            raise InvalidBearerError("unknown token prefix")
         row = kind.resolver.resolve(sha256_hex(token))
         if row is None:
-            raise InvalidBearer("token unknown or revoked")
+            raise InvalidBearerError("token unknown or revoked")
         return AuthContext(
             subject_type=kind.subject_type,
             subject_email=row.subject_email,
@@ -165,7 +171,9 @@ class OAuthAccessTokenResolver:
         positive_ttl: int = POSITIVE_TTL_SECONDS,
         negative_ttl: int = NEGATIVE_TTL_SECONDS,
     ) -> None:
-        self._session_factory = session_factory
+        # session_factory and the cache helpers below are friend-API for
+        # _VariantResolver in this module — kept public-named on purpose.
+        self.session_factory = session_factory
         self._redis = redis_client
         self._positive_ttl = positive_ttl
         self._negative_ttl = negative_ttl
@@ -179,7 +187,7 @@ class OAuthAccessTokenResolver:
     def _cache_key(self, token_hash: str) -> str:
         return TOKEN_CACHE_KEY_FMT.format(hash=token_hash)
 
-    def _cache_get(self, token_hash: str) -> ResolvedRow | None | Literal["invalid"]:
+    def cache_get(self, token_hash: str) -> ResolvedRow | None | Literal["invalid"]:
         raw = self._redis.get(self._cache_key(token_hash))
         if raw is None:
             return None
@@ -193,17 +201,17 @@ class OAuthAccessTokenResolver:
             logger.warning("auth:token cache entry malformed; treating as miss")
             return None
 
-    def _cache_set_positive(self, token_hash: str, row: ResolvedRow) -> None:
+    def cache_set_positive(self, token_hash: str, row: ResolvedRow) -> None:
         self._redis.setex(
             self._cache_key(token_hash),
             self._positive_ttl,
             json.dumps(_row_to_cache(row)),
         )
 
-    def _cache_set_negative(self, token_hash: str) -> None:
+    def cache_set_negative(self, token_hash: str) -> None:
         self._redis.setex(self._cache_key(token_hash), self._negative_ttl, "invalid")
 
-    def _hard_expire(self, session: Session, row_id: uuid.UUID, token_hash: str) -> None:
+    def hard_expire(self, session: Session, row_id: uuid.UUID | str, token_hash: str) -> None:
         """Atomic CAS — only the worker that flips revoked_at emits audit;
         replays are idempotent. Spec: tokens.md §Detection + hard-expire.
         """
@@ -216,21 +224,22 @@ class OAuthAccessTokenResolver:
         session.commit()
         if result.rowcount == 1:
             logger.warning(
-                "audit: %s token_id=%s", AUDIT_OAUTH_EXPIRED, row_id,
+                "audit: %s token_id=%s",
+                AUDIT_OAUTH_EXPIRED,
+                row_id,
                 extra={"audit": True, "token_id": str(row_id)},
             )
         self._redis.delete(self._cache_key(token_hash))
-        self._cache_set_negative(token_hash)
+        self.cache_set_negative(token_hash)
 
 
 class _VariantResolver:
-
     def __init__(self, parent: OAuthAccessTokenResolver, variant: ScopeVariant) -> None:
         self._parent = parent
         self._variant = variant
 
     def resolve(self, token_hash: str) -> ResolvedRow | None:
-        cached = self._parent._cache_get(token_hash)
+        cached = self._parent.cache_get(token_hash)
         if cached == "invalid":
             return None
         if cached is not None and not isinstance(cached, str):
@@ -238,23 +247,24 @@ class _VariantResolver:
                 return None
             return cached
 
-        # _session_factory returns Flask-SQLAlchemy's scoped_session, which is
+        # session_factory returns Flask-SQLAlchemy's scoped_session, which is
         # request-bound and not a context manager; use it directly.
-        session = self._parent._session_factory()
+        session = self._parent.session_factory()
         row = self._load_from_db(session, token_hash)
         if row is None:
-            self._parent._cache_set_negative(token_hash)
+            self._parent.cache_set_negative(token_hash)
             return None
 
         now = datetime.now(UTC)
         if row.expires_at is not None and row.expires_at <= now:
-            self._parent._hard_expire(session, row.id, token_hash)
+            self._parent.hard_expire(session, row.id, token_hash)
             return None
 
         if not self._matches_variant_model(row):
             logger.error(
                 "internal_state_invariant: account_id/prefix mismatch token_id=%s prefix=%s",
-                row.id, row.prefix,
+                row.id,
+                row.prefix,
             )
             return None
 
@@ -265,7 +275,7 @@ class _VariantResolver:
             token_id=uuid.UUID(str(row.id)),
             expires_at=row.expires_at,
         )
-        self._parent._cache_set_positive(token_hash, resolved)
+        self._parent.cache_set_positive(token_hash, resolved)
         return resolved
 
     def _matches_variant(self, row: ResolvedRow) -> bool:
@@ -352,7 +362,11 @@ def _extract_bearer(req) -> str | None:
     return value.strip()
 
 
-def validate_bearer(*, accept: frozenset[Accepts]) -> Callable:
+_DP = ParamSpec("_DP")
+_DR = TypeVar("_DR")
+
+
+def validate_bearer(*, accept: frozenset[Accepts]) -> Callable[[Callable[_DP, _DR]], Callable[_DP, _DR]]:
     """Opt-in: omitting it leaves the route unauthenticated.
 
     Resolves user-level OAuth bearers (``dfoa_`` / ``dfoe_``). Legacy
@@ -360,21 +374,19 @@ def validate_bearer(*, accept: frozenset[Accepts]) -> Callable:
     and are rejected here as the wrong auth scheme for this surface.
     """
 
-    def wrap(fn: Callable) -> Callable:
+    def wrap(fn: Callable[_DP, _DR]) -> Callable[_DP, _DR]:
         @wraps(fn)
-        def inner(*args, **kwargs):
+        def inner(*args: _DP.args, **kwargs: _DP.kwargs) -> _DR:
             token = _extract_bearer(request)
             if token is None:
                 raise Unauthorized("missing bearer token")
 
             if _authenticator is None:
-                raise ServiceUnavailable(
-                    "bearer_auth_disabled: set ENABLE_OAUTH_BEARER=true to enable"
-                )
+                raise ServiceUnavailable("bearer_auth_disabled: set ENABLE_OAUTH_BEARER=true to enable")
 
             try:
                 ctx = get_authenticator().authenticate(token)
-            except InvalidBearer as e:
+            except InvalidBearerError as e:
                 raise Unauthorized(str(e))
 
             if _SUBJECT_TO_ACCEPT[ctx.subject_type] not in accept:
@@ -388,17 +400,15 @@ def validate_bearer(*, accept: frozenset[Accepts]) -> Callable:
     return wrap
 
 
-def bearer_feature_required(fn: Callable) -> Callable:
+def bearer_feature_required[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """503 if ENABLE_OAUTH_BEARER is off — minted tokens would be unusable
     without the authenticator, so fail fast instead of approving silently.
     """
 
     @wraps(fn)
-    def inner(*args, **kwargs):
+    def inner(*args: P.args, **kwargs: P.kwargs) -> R:
         if not dify_config.ENABLE_OAUTH_BEARER:
-            raise ServiceUnavailable(
-                "bearer_auth_disabled: set ENABLE_OAUTH_BEARER=true to enable"
-            )
+            raise ServiceUnavailable("bearer_auth_disabled: set ENABLE_OAUTH_BEARER=true to enable")
         return fn(*args, **kwargs)
 
     return inner
@@ -423,8 +433,7 @@ def require_scope(scope: str) -> Callable:
             ctx = getattr(g, "auth_ctx", None)
             if ctx is None:
                 raise RuntimeError(
-                    "require_scope used without validate_bearer; "
-                    "stack @validate_bearer above @require_scope"
+                    "require_scope used without validate_bearer; stack @validate_bearer above @require_scope"
                 )
             if SCOPE_FULL not in ctx.scopes and scope not in ctx.scopes:
                 raise Forbidden(f"insufficient_scope: {scope}")
@@ -442,22 +451,24 @@ def require_scope(scope: str) -> Callable:
 
 def build_registry(session_factory, redis_client) -> TokenKindRegistry:
     oauth = OAuthAccessTokenResolver(session_factory, redis_client)
-    return TokenKindRegistry([
-        TokenKind(
-            prefix="dfoa_",
-            subject_type=SubjectType.ACCOUNT,
-            scopes=frozenset({"full"}),
-            source="oauth_account",
-            resolver=oauth.for_account(),
-        ),
-        TokenKind(
-            prefix="dfoe_",
-            subject_type=SubjectType.EXTERNAL_SSO,
-            scopes=frozenset({"apps:run"}),
-            source="oauth_external_sso",
-            resolver=oauth.for_external_sso(),
-        ),
-    ])
+    return TokenKindRegistry(
+        [
+            TokenKind(
+                prefix="dfoa_",
+                subject_type=SubjectType.ACCOUNT,
+                scopes=frozenset({"full"}),
+                source="oauth_account",
+                resolver=oauth.for_account(),
+            ),
+            TokenKind(
+                prefix="dfoe_",
+                subject_type=SubjectType.EXTERNAL_SSO,
+                scopes=frozenset({"apps:run"}),
+                source="oauth_external_sso",
+                resolver=oauth.for_external_sso(),
+            ),
+        ]
+    )
 
 
 def build_and_bind(session_factory, redis_client) -> BearerAuthenticator:

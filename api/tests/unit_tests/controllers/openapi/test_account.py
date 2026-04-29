@@ -1,4 +1,5 @@
 """User-scoped identity + session endpoints under /openapi/v1/account."""
+
 import builtins
 
 import pytest

@@ -4,6 +4,7 @@
 that is the design lock-in: forgetting an auth layer is structurally
 impossible because there is no "sometimes wrap, sometimes don't" choice.
 """
+
 from __future__ import annotations
 
 from functools import wraps

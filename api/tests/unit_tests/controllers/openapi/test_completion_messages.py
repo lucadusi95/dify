@@ -6,8 +6,10 @@ from flask_restx import Api
 
 
 def _client():
-    from controllers.openapi import completion_messages  # noqa: F401
-    from controllers.openapi import openapi_ns
+    from controllers.openapi import (
+        completion_messages,  # noqa: F401
+        openapi_ns,
+    )
 
     app = Flask(__name__)
     api = Api(app)
@@ -31,8 +33,9 @@ def test_completion_returns_response_model(svc, bypass_pipeline):
         200,
     )
     fake = SimpleNamespace(mode="completion", id="app1", tenant_id="t1")
-    with patch("controllers.openapi.completion_messages._unpack_app", return_value=fake), patch(
-        "controllers.openapi.completion_messages._unpack_caller", return_value=SimpleNamespace()
+    with (
+        patch("controllers.openapi.completion_messages._unpack_app", return_value=fake),
+        patch("controllers.openapi.completion_messages._unpack_caller", return_value=SimpleNamespace()),
     ):
         r = _client().post(
             "/openapi/v1/apps/app1/completion-messages",

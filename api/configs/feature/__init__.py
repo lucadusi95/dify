@@ -523,7 +523,8 @@ class HttpConfig(BaseSettings):
         default="difyctl",
     )
 
-    @computed_field
+    @computed_field  # type: ignore[misc]
+    @property
     def OPENAPI_KNOWN_CLIENT_IDS(self) -> frozenset[str]:
         return frozenset(c for c in self.inner_OPENAPI_KNOWN_CLIENT_IDS.split(",") if c)
 

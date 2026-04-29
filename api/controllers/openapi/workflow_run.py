@@ -1,8 +1,10 @@
 """POST /openapi/v1/apps/<app_id>/workflows/run — port of
 service_api/app/workflow.py:WorkflowRunApi."""
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from flask import request
@@ -128,5 +130,10 @@ class WorkflowRunApi(Resource):
         if streaming:
             return helper.compact_generate_response(response)
 
-        body_dict = response[0] if isinstance(response, tuple) else response
-        return WorkflowRunResponse.model_validate(body_dict).model_dump(mode="json"), 200
+        if isinstance(response, tuple):
+            body_dict: Any = response[0]  # pyright: ignore[reportArgumentType]
+        else:
+            body_dict = response
+        if not isinstance(body_dict, Mapping):
+            raise InternalServerError("blocking generate returned non-mapping response")
+        return WorkflowRunResponse.model_validate(dict(body_dict)).model_dump(mode="json"), 200

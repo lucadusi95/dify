@@ -2,6 +2,7 @@
 
 Endpoints attach via @APP_PIPELINE.guard(scope=…). No alternative paths.
 """
+
 from __future__ import annotations
 
 from controllers.openapi.auth.pipeline import Pipeline

@@ -1,4 +1,5 @@
 """GET /openapi/v1/apps/<app_id>/info — port of service_api/app/app.py:AppInfoApi."""
+
 from __future__ import annotations
 
 from flask_restx import Resource

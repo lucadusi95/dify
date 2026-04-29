@@ -6,8 +6,10 @@ from flask_restx import Api
 
 
 def _client():
-    from controllers.openapi import openapi_ns
-    from controllers.openapi import workflow_run  # noqa: F401
+    from controllers.openapi import (
+        openapi_ns,
+        workflow_run,  # noqa: F401
+    )
 
     app = Flask(__name__)
     api = Api(app)
@@ -32,8 +34,9 @@ def test_workflow_run_returns_response_model(svc, bypass_pipeline):
         200,
     )
     fake = SimpleNamespace(mode="workflow", id="app1", tenant_id="t1")
-    with patch("controllers.openapi.workflow_run._unpack_app", return_value=fake), patch(
-        "controllers.openapi.workflow_run._unpack_caller", return_value=SimpleNamespace()
+    with (
+        patch("controllers.openapi.workflow_run._unpack_app", return_value=fake),
+        patch("controllers.openapi.workflow_run._unpack_caller", return_value=SimpleNamespace()),
     ):
         r = _client().post("/openapi/v1/apps/app1/workflows/run", json={"inputs": {"x": 1}})
     assert r.status_code == 200

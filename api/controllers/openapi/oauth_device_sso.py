@@ -9,6 +9,7 @@ EE-only. Browser flow:
 Function-based (raw @bp.route) rather than Resource classes because the
 handlers do redirects + cookie kwargs that don't fit the Resource shape.
 """
+
 from __future__ import annotations
 
 import logging
@@ -51,8 +52,8 @@ from services.oauth_device_flow import (
     PREFIX_OAUTH_EXTERNAL_SSO,
     DeviceFlowRedis,
     DeviceFlowStatus,
-    InvalidTransition,
-    StateNotFound,
+    InvalidTransitionError,
+    StateNotFoundError,
     mint_oauth_token,
     oauth_ttl_days,
 )
@@ -171,13 +172,15 @@ def approval_context():
         logger.warning("approval-context: bad cookie: %s", e)
         raise Unauthorized("no_session") from e
 
-    return jsonify({
-        "subject_email": claims.subject_email,
-        "subject_issuer": claims.subject_issuer,
-        "user_code": claims.user_code,
-        "csrf_token": claims.csrf_token,
-        "expires_at": claims.expires_at.isoformat(),
-    }), 200
+    return jsonify(
+        {
+            "subject_email": claims.subject_email,
+            "subject_issuer": claims.subject_issuer,
+            "user_code": claims.user_code,
+            "csrf_token": claims.csrf_token,
+            "expires_at": claims.expires_at.isoformat(),
+        }
+    ), 200
 
 
 @bp.route("/oauth/device/approve-external", methods=["POST"])
@@ -251,8 +254,8 @@ def approve_external():
             token_id=str(mint.token_id),
             poll_payload=poll_payload,
         )
-    except (StateNotFound, InvalidTransition) as e:
-        logger.error("approve-external: state transition raced: %s", e)
+    except (StateNotFoundError, InvalidTransitionError) as e:
+        logger.exception("approve-external: state transition raced")
         raise Conflict("state_lost") from e
 
     _emit_approve_external_audit(state, claims, mint)
@@ -264,9 +267,11 @@ def approve_external():
 
 def _emit_approve_external_audit(state, claims, mint) -> None:
     logger.warning(
-        "audit: oauth.device_flow_approved subject_type=%s "
-        "subject_email=%s subject_issuer=%s token_id=%s",
-        SubjectType.EXTERNAL_SSO, claims.subject_email, claims.subject_issuer, mint.token_id,
+        "audit: oauth.device_flow_approved subject_type=%s subject_email=%s subject_issuer=%s token_id=%s",
+        SubjectType.EXTERNAL_SSO,
+        claims.subject_email,
+        claims.subject_issuer,
+        mint.token_id,
         extra={
             "audit": True,
             "event": "oauth.device_flow_approved",
