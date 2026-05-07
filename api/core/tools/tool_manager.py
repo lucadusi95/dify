@@ -248,12 +248,13 @@ class ToolManager:
             # check if the credential is allowed to be used
             from core.helper.credential_utils import check_credential_policy_compliance
 
-            check_credential_policy_compliance(
-                credential_id=builtin_provider.id,
-                provider=provider_id,
-                credential_type=PluginCredentialType.TOOL,
-                check_existence=False,
-            )
+            if not dify_config.ENTERPRISE_DISABLE_RUNTIME_CREDENTIAL_CHECK:
+                check_credential_policy_compliance(
+                    credential_id=builtin_provider.id,
+                    provider=provider_id,
+                    credential_type=PluginCredentialType.TOOL,
+                    check_existence=False,
+                )
 
             encrypter, cache = create_provider_encrypter(
                 tenant_id=tenant_id,
