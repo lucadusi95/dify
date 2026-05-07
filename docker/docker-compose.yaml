@@ -786,9 +786,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-    networks:
-      - ssrf_proxy_network
-      - default
 
   # worker service
   # The Celery worker for processing all queues (dataset, workflow, mail, etc.)
@@ -832,9 +829,6 @@ services:
       retries: 3
       start_period: 60s
       disable: ${COMPOSE_WORKER_HEALTHCHECK_DISABLED:-true}
-    networks:
-      - ssrf_proxy_network
-      - default
 
   # worker_beat service
   # Celery beat for scheduling periodic tasks.
@@ -870,9 +864,6 @@ services:
       retries: 3
       start_period: 60s
       disable: ${COMPOSE_WORKER_HEALTHCHECK_DISABLED:-true}
-    networks:
-      - ssrf_proxy_network
-      - default
 
   # Frontend web application.
   web:
@@ -1011,8 +1002,6 @@ services:
       - ./volumes/sandbox/conf:/conf
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8194/health"]
-    networks:
-      - ssrf_proxy_network
 
   # plugin daemon
   plugin_daemon:
@@ -1108,9 +1097,6 @@ services:
       REVERSE_PROXY_PORT: ${SSRF_REVERSE_PROXY_PORT:-8194}
       SANDBOX_HOST: ${SSRF_SANDBOX_HOST:-sandbox}
       SANDBOX_PORT: ${SANDBOX_PORT:-8194}
-    networks:
-      - ssrf_proxy_network
-      - default
 
   # Certbot service
   # use `docker-compose --profile certbot up` to start the certbot service.
@@ -1660,17 +1646,6 @@ services:
     restart: always
     volumes:
       - ./volumes/unstructured:/app/data
-
-networks:
-  # create a network between sandbox, api and ssrf_proxy, and can not access outside.
-  ssrf_proxy_network:
-    driver: bridge
-    internal: true
-  milvus:
-    driver: bridge
-  opensearch-net:
-    driver: bridge
-    internal: true
 
 volumes:
   oradata:
